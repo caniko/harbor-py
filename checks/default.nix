@@ -8,12 +8,13 @@
   treefmt-nix,
   git-hooks,
   meta,
+  harborRoot,
 }: let
   python = pkgs.python313;
   fixture = ../templates/default;
   templateFlake = builtins.readFile (fixture + "/flake.nix");
   templateSimit = builtins.fromTOML (builtins.readFile (fixture + "/simit.toml"));
-  templateTreefmt = (treefmt-nix.lib.evalModule pkgs (import (fixture + "/nix/treefmt.nix") {harbor = self.inputs.harborRoot;})).config;
+  templateTreefmt = (treefmt-nix.lib.evalModule pkgs (import (fixture + "/nix/treefmt.nix") {harbor = harborRoot;})).config;
   languageTreefmt = (treefmt-nix.lib.evalModule pkgs {imports = [self.treefmtModules.python];}).config;
   templateHooks = builtins.readFile (fixture + "/nix/pre-commit.nix");
   ffmpeg = harbor.mkFfmpegCompat {inherit pkgs;};
@@ -185,7 +186,7 @@ in
         flakeNix = ../templates/default/flake.nix;
         inputs = {
           inherit nixpkgs nixpkgs-darwin treefmt-nix git-hooks;
-          harbor = self.inputs.harborRoot;
+          harbor = harborRoot;
         };
         requiredFiles = [
           "flake.nix"
