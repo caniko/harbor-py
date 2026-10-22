@@ -64,14 +64,11 @@
     # harbor's superproject root passes its shared formatter; a formal
     # argument would make standalone Nix resolve it as a registry flake.
     harborFormatting = outputArgs.harborFormatting or null;
-    # Inside the harbor superproject the root flake is passed in. Standalone,
-    # compose the subset the template fixtures read, named like harbor's root.
-    prefixed = component: nixpkgs.lib.mapAttrs' (name: nixpkgs.lib.nameValuePair "${component}-${name}");
     harborRoot =
-      outputArgs.harborRoot or {
-        lib.python = self.lib;
-        treefmtModules = prefixed "core" harbor-meta.treefmtModules // prefixed "python" self.treefmtModules;
-      };
+      outputArgs.harborRoot or (harbor-meta.lib.standaloneRoot {
+        core = harbor-meta;
+        python = self;
+      });
     lib = import ./lib {
       inherit
         nixpkgs
