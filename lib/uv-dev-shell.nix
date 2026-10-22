@@ -1,0 +1,101 @@
+{
+  nixLib,
+  metaDevShell,
+  opencodeLspLib,
+  mkUvHelper,
+}: {
+  pkgs,
+  timeZone ? "UTC",
+  python ? pkgs.python313,
+  uvExtra ? null,
+  devGroup ? "dev",
+  basePackages ? [],
+  extraPackages ? [],
+  baseLibs ? [],
+  extraLibs ? [],
+  extraEnv ? {},
+  pythonPathEntries ? [],
+  helperPackages ? [],
+  helperSpecs ? [],
+  shellHookPrefix ? "",
+  shellHookSuffix ? "",
+  autoSync ? true,
+  venvDir ? ".venv",
+  systemSitePackages ? false,
+  syncArgs ? [],
+  runtime ? null,
+  opencodeLsp ? {enable = true;},
+}: let
+  inherit (nixLib) escapeShellArg escapeShellArgs optional optionalString;
+  expectedPython = nixLib.getExe python;
+  scopedRuntime =
+    if runtime != null
+    then runtime
+    else
+      metaDevShell.mkRuntime {
+        inherit pkgs;
+        name = "harbor-python-runtime";
+        libraryPackages = baseLibs ++ extraLibs;
+      };
+  venvPython = pkgs.writeShellScript "harbor-venv-python" ''
+    export __PYVENV_LAUNCHER__="$(${pkgs.coreutils}/bin/realpath -s "$0")"
+    exec ${nixLib.getExe scopedRuntime} ${expectedPython} "$@"
+  '';
+  uvFlags = escapeShellArgs (
+    optional (uvExtra != null) "--extra"
+    ++ optional (uvExtra != null) uvExtra
+    ++ optional (devGroup != null) "--group"
+    ++ optional (devGroup != null) devGroup
+    ++ syncArgs
+  );
+  generatedHelpers = map (spec: mkUvHelper ({inherit pkgs;} // spec)) helperSpecs;
+  opencodeLspHook =
+    if (opencodeLsp.enable or true) && opencodeLspLib != null
+    then
+      (opencodeLspLib.mkShell {
+        inherit pkgs;
+        profiles = ["python"];
+      }).shellHook
+    else "";
+  pythonPath = optionalString (pythonPathEntries != []) ''
+    export PYTHONPATH=${escapeShellArg (nixLib.concatStringsSep ":" pythonPathEntries)}"''${PYTHONPATH:+:$PYTHONPATH}"
+  '';
+  manage = operation: ''
+    ${expectedPython} ${./venv.py} ${operation} --venv "$VIRTUAL_ENV" \
+      --launcher ${venvPython} ${optionalString systemSitePackages "--system-site-packages"} || return 1
+  '';
+  syncHook = optionalString autoSync ''
+    export VIRTUAL_ENV=${optionalString (!(nixLib.hasPrefix "/" venvDir)) ''"$PWD"/''}${escapeShellArg venvDir}
+    ${manage "prepare"}
+    unset UV_NO_SYNC
+    uv sync --active --python ${expectedPython} --python-preference only-system ${uvFlags} || return 1
+    ${manage "wrap"}
+    export UV_NO_SYNC=1
+    . "$VIRTUAL_ENV/bin/activate"
+  '';
+in
+  assert nixLib.assertMsg (runtime == null || baseLibs ++ extraLibs == []) "harbor-py: provide runtime or baseLibs/extraLibs, not both";
+    if metaDevShell == null
+    then throw "harbor-py: mkUvDevShell requires the harbor-meta flake input"
+    else
+      metaDevShell.mkShell {
+        inherit pkgs timeZone;
+        packages = [python pkgs.uv scopedRuntime] ++ basePackages ++ extraPackages ++ generatedHelpers ++ helperPackages;
+        env =
+          {
+            UV_LINK_MODE = "copy";
+            UV_PYTHON_DOWNLOADS = "never";
+          }
+          // extraEnv;
+        mkShellArgs.passthru = {
+          runtime = scopedRuntime;
+          inherit venvPython;
+        };
+        extraShellHook = ''
+          ${shellHookPrefix}
+          ${opencodeLspHook}
+          ${pythonPath}
+          ${syncHook}
+          ${shellHookSuffix}
+        '';
+      }
