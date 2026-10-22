@@ -1,7 +1,8 @@
-{ pkgs, ... }: {
+{harbor}: {...}: {
+  imports = [
+    harbor.treefmtModules.core-nix
+    harbor.treefmtModules.core-toml
+    harbor.treefmtModules.python-python
+  ];
   projectRootFile = "flake.nix";
-
-  programs.alejandra.enable = true;
-
-  programs.taplo.enable = true;
 }
