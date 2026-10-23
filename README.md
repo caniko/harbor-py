@@ -30,6 +30,11 @@ and `uv.lock`, or replace them through the pyproject-nix overlay. Keep one
 provider for a given Python package instead of mixing Nix and uv copies through
 `PYTHONPATH`.
 
+With `opencodeLsp.enable` (the default), the OpenCode Python servers,
+`basedpyright` and `ruff`, are also on `PATH`. Other editors can then resolve
+the same binaries through direnv. An activated `.venv` still takes precedence
+when the project declares its own copies.
+
 Nix checks run against read-only source trees. Tool caches and reports must be
 placed under `$TMPDIR` or `$out`, not in the source tree.
 
