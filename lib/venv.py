@@ -3,6 +3,7 @@
 import argparse
 import contextlib
 import fcntl
+import hashlib
 import json
 import os
 from pathlib import Path
@@ -55,14 +56,40 @@ def create(path, site):
 
 @contextlib.contextmanager
 def venv_lock(path):
-    # Keep the anchor beside the venv: replacement moves/removes the venv itself.
+    # Keep the anchor outside the project and the replaceable venv. Canonicalize
+    # its parent so shell entries through directory aliases share the same lock.
     # Never unlink it, including on failure, so waiters retain the same inode.
     path.parent.mkdir(parents=True, exist_ok=True)
-    anchor = path.parent / f".{path.name}.harbor-python.lock"
-    fd = os.open(anchor, os.O_CREAT | os.O_RDWR | os.O_CLOEXEC | os.O_NOFOLLOW, 0o600)
+    cache = Path(os.environ.get("XDG_CACHE_HOME", ""))
+    if not cache.is_absolute():
+        cache = Path.home() / ".cache"
+    state = cache / "harbor-python" / "locks"
+    state.mkdir(parents=True, exist_ok=True, mode=0o700)
+    directory = os.open(
+        state, os.O_RDONLY | os.O_DIRECTORY | os.O_CLOEXEC | os.O_NOFOLLOW
+    )
+    try:
+        metadata = os.fstat(directory)
+        if metadata.st_uid != os.getuid() or metadata.st_mode & 0o077:
+            raise ValueError(
+                f"venv lock directory must be private and user-owned: {state}"
+            )
+        identity = hashlib.sha256(
+            os.fsencode(path.parent.resolve() / path.name)
+        ).hexdigest()
+        fd = os.open(
+            identity + ".lock",
+            os.O_CREAT | os.O_RDWR | os.O_CLOEXEC | os.O_NOFOLLOW,
+            0o600,
+            dir_fd=directory,
+        )
+    finally:
+        os.close(directory)
     try:
         if not stat.S_ISREG(os.fstat(fd).st_mode):
-            raise ValueError(f"venv lock must be a regular file: {anchor}")
+            raise ValueError(
+                f"venv lock must be a regular file: {state / (identity + '.lock')}"
+            )
         fcntl.flock(fd, fcntl.LOCK_EX)
         yield
     finally:
@@ -138,19 +165,43 @@ def wrap_locked(path, launcher, site):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("operation", choices=["prepare", "wrap"])
+    parser.add_argument("operation", choices=["prepare", "wrap", "sync"])
     parser.add_argument("--venv", type=Path, required=True)
     parser.add_argument("--launcher", type=Path, required=True)
     parser.add_argument("--system-site-packages", action="store_true")
-    args = parser.parse_args()
+    parser.add_argument("--uv", default="uv")
+    argv = sys.argv[1:]
+    separator = argv.index("--") if "--" in argv else len(argv)
+    args = parser.parse_args(argv[:separator])
+    sync_args = argv[separator + 1 :]
     if sys.implementation.name != "cpython":
         parser.error("scoped venv launchers require CPython")
+    if args.operation != "sync" and sync_args:
+        parser.error("sync arguments require the sync operation")
     path = args.venv.absolute()
     try:
         with venv_lock(path):
-            if args.operation == "prepare":
+            if args.operation in ["prepare", "sync"]:
                 prepare_locked(path, args.system_site_packages)
             wrap_locked(path, args.launcher, args.system_site_packages)
+            if args.operation == "sync":
+                env = dict(os.environ, VIRTUAL_ENV=str(path))
+                env.pop("UV_NO_SYNC", None)
+                subprocess.run(
+                    [
+                        args.uv,
+                        "sync",
+                        "--active",
+                        "--python",
+                        sys.executable,
+                        "--python-preference",
+                        "only-system",
+                        *sync_args,
+                    ],
+                    env=env,
+                    check=True,
+                )
+                wrap_locked(path, args.launcher, args.system_site_packages)
     except (OSError, ValueError, subprocess.CalledProcessError) as error:
         parser.exit(1, f"harbor-py: {error}\n")
 

@@ -43,8 +43,10 @@ in
       . ${disabledHook}
       test ! -e .venv
       (
-        uv() { return 42; }
+        cp pyproject.toml "$TMPDIR/valid-project.toml"
+        printf '[invalid\n' > pyproject.toml
         if . ${hook}; then exit 1; fi
+        cp "$TMPDIR/valid-project.toml" pyproject.toml
         test -z "''${UV_NO_SYNC:-}"
         test -z "''${HARBOR_SYNC_FINISHED:-}"
       )
