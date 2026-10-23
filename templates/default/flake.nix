@@ -2,7 +2,7 @@
   description = "Python uv project — powered by harbor-py";
 
   inputs = {
-    harbor.url = "git+https://github.com/caniko/harbor.git?ref=feat/harbor-monorepo-components&rev=7d99eb50c52d0a941e2996b97c469b32a7657ef4";
+    harbor.url = "git+https://github.com/caniko/harbor.git?ref=feat/harbor-monorepo-components&rev=a623c2db712a823f75b29523940fc7432dea49aa";
     nixpkgs.follows = "harbor/nixpkgs";
     nixpkgs-darwin.follows = "harbor/nixpkgs-darwin";
     treefmt-nix.follows = "harbor/treefmt-nix";
