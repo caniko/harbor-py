@@ -1,6 +1,7 @@
 """Exercise managed venvs with real CPython and uv, without network access."""
 
 import os
+import contextlib
 import importlib.util
 import multiprocessing
 from pathlib import Path
@@ -8,6 +9,7 @@ import subprocess
 import shutil
 import sys
 import tempfile
+import time
 import unittest
 from unittest import mock
 
@@ -194,8 +196,118 @@ class VenvTests(unittest.TestCase):
         self.assertEqual((self.venv / "pyvenv.cfg").read_bytes(), original)
         self.assert_runtime()
 
-    def test_sync_run_and_shebang_keep_wrapper(self):
+    def test_helper_lock_does_not_add_untracked_project_state(self):
+        subprocess.run(["git", "init", "-q", str(self.root)], check=True)
+        (self.root / ".gitignore").write_text(".venv/\n")
+        subprocess.run(["git", "-C", str(self.root), "add", ".gitignore"], check=True)
+        self.venv = self.root / ".venv"
         self.manage()
+        status = subprocess.check_output(
+            ["git", "-C", str(self.root), "ls-files", "--others", "--exclude-standard"],
+            text=True,
+        ).splitlines()
+        self.assertEqual(status, ["python-launcher"])
+        self.assert_runtime()
+
+    def test_cache_home_defaults_and_absolute_override(self):
+        spec = importlib.util.spec_from_file_location("harbor_venv", self.helper)
+        helper = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(helper)
+        for cache in ["", "relative-cache", "absolute"]:
+            with self.subTest(cache=cache), tempfile.TemporaryDirectory(
+                prefix="harbor cache "
+            ) as temporary:
+                home = Path(temporary)
+                selected = str(home / "selected") if cache == "absolute" else cache
+                expected = home / ("selected" if cache == "absolute" else ".cache")
+                with (
+                    mock.patch.dict(
+                        os.environ, {"HOME": str(home), "XDG_CACHE_HOME": selected}
+                    ),
+                    contextlib.chdir(self.root),
+                    helper.venv_lock(self.venv),
+                ):
+                    self.assertEqual(
+                        len(list((expected / "harbor-python/locks").glob("*.lock"))),
+                        1,
+                    )
+                self.assertEqual(list(self.root.iterdir()), [self.wrapper])
+
+    def test_sync_holds_lock_until_wrapping_before_a_policy_upgrade(self):
+        started = self.root / "sync-started"
+        release = self.root / "release-sync"
+        synced = self.root / "synced-interpreter"
+        uv = self.root / "uv-fixture"
+        uv.write_text(
+            f"#!{shutil.which('bash')}\n"
+            f"touch '{started}'\n"
+            f"for i in {{1..1000}}; do test -e '{release}' && break; sleep 0.01; done\n"
+            f"test -e '{release}' || exit 42\n"
+            f"'{self.venv}/bin/python' -c 'import sys; print(sys.prefix)' > '{synced}'\n"
+        )
+        uv.chmod(0o755)
+        first = subprocess.Popen(
+            [
+                self.python,
+                str(self.helper),
+                "sync",
+                "--venv",
+                str(self.venv),
+                "--launcher",
+                str(self.wrapper),
+                "--uv",
+                str(uv),
+            ],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+        )
+        second = None
+        try:
+            deadline = time.monotonic() + 5
+            while (
+                not started.exists()
+                and first.poll() is None
+                and time.monotonic() < deadline
+            ):
+                time.sleep(0.01)
+            self.assertTrue(started.exists(), "helper did not reach synchronization")
+            second = subprocess.Popen(
+                [
+                    self.python,
+                    str(self.helper),
+                    "prepare",
+                    "--venv",
+                    str(self.venv),
+                    "--launcher",
+                    str(self.wrapper),
+                    "--system-site-packages",
+                ],
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=True,
+            )
+            with self.assertRaises(subprocess.TimeoutExpired):
+                second.communicate(timeout=0.5)
+        finally:
+            release.touch()
+            for child in [first, *([second] if second is not None else [])]:
+                try:
+                    child.communicate(timeout=15)
+                except subprocess.TimeoutExpired:
+                    child.kill()
+                    child.communicate(timeout=5)
+        self.assertEqual(first.returncode, 0)
+        self.assertIsNotNone(second)
+        self.assertEqual(second.returncode, 0)
+        self.assertEqual(synced.read_text().strip(), str(self.venv))
+        self.assertIn(
+            "include-system-site-packages = true",
+            (self.venv / "pyvenv.cfg").read_text(),
+        )
+        self.assert_runtime()
+
+    def test_sync_run_and_shebang_keep_wrapper(self):
         (self.root / "pyproject.toml").write_text(
             '[project]\nname="runtime-probe"\nversion="0.1.0"\ndependencies=[]\n'
             "[tool.uv]\npackage=false\n"
@@ -203,18 +315,20 @@ class VenvTests(unittest.TestCase):
         env = dict(os.environ, VIRTUAL_ENV=str(self.venv))
         subprocess.run(
             [
-                "uv",
+                self.python,
+                str(self.helper),
                 "sync",
-                "--active",
+                "--venv",
+                str(self.venv),
+                "--launcher",
+                str(self.wrapper),
+                "--",
                 "--offline",
-                "--python-preference",
-                "only-system",
             ],
             cwd=self.root,
             env=env,
             check=True,
         )
-        self.manage("wrap")
         subprocess.run(
             [
                 "uv",
