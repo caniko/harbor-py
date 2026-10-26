@@ -25,7 +25,8 @@ in
   assert !(shell ? LD_LIBRARY_PATH);
   assert !(disabled ? LD_LIBRARY_PATH);
     pkgs.runCommand "harbor-py-managed-venv" {
-      nativeBuildInputs = shell.nativeBuildInputs;
+      # test_venv.py proves the lock adds no untracked project state via git.
+      nativeBuildInputs = shell.nativeBuildInputs ++ [pkgs.git];
       env = shell.passthru.devShellSpec.env;
     } ''
       export HOME="$TMPDIR/home"
@@ -43,8 +44,10 @@ in
       . ${disabledHook}
       test ! -e .venv
       (
-        uv() { return 42; }
+        cp pyproject.toml "$TMPDIR/valid-project.toml"
+        printf '[invalid\n' > pyproject.toml
         if . ${hook}; then exit 1; fi
+        cp "$TMPDIR/valid-project.toml" pyproject.toml
         test -z "''${UV_NO_SYNC:-}"
         test -z "''${HARBOR_SYNC_FINISHED:-}"
       )
