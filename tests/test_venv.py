@@ -92,6 +92,20 @@ class VenvTests(unittest.TestCase):
         self.assertTrue(sentinel.exists())
         self.assert_runtime()
 
+    def test_incompatible_uv_venv_is_recreated(self):
+        subprocess.run(
+            ["uv", "venv", "--offline", "--python", self.python, str(self.venv)],
+            check=True,
+        )
+        (self.venv / "old-environment").touch()
+        self.manage(site=True)
+        self.assertFalse((self.venv / "old-environment").exists())
+        self.assertIn(
+            "include-system-site-packages = true",
+            (self.venv / "pyvenv.cfg").read_text(),
+        )
+        self.assertTrue((self.venv / ".harbor-python.json").is_file())
+
     def test_site_policy_change_recreates_managed_venv(self):
         self.manage()
         (self.venv / "old-environment").touch()
