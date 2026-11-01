@@ -83,9 +83,24 @@ def prepare_locked(path, site):
         create(path, site)
         return
     marker = path / ".harbor-python.json"
-    if not marker.is_file() or not (path / "pyvenv.cfg").is_file():
+    if not (path / "pyvenv.cfg").is_file():
         raise ValueError(
             f"incompatible unmanaged venv at {path}; move it aside before recreating it"
+        )
+    if not marker.is_file():
+        # A uv run outside the shell recreates the project venv without the
+        # site policy; uv.lock rebuilds it, so it is as replaceable as ours.
+        try:
+            uv_created = "uv" in configuration(path)
+        except OSError:
+            uv_created = False
+        if not uv_created:
+            raise ValueError(
+                f"incompatible unmanaged venv at {path}; move it aside before recreating it"
+            )
+        print(
+            f"harbor-py: replacing uv-created venv at {path} (interpreter/site policy mismatch)",
+            file=sys.stderr,
         )
     # Retain the previous environment if creation fails (including ABI errors).
     with tempfile.TemporaryDirectory(prefix=".harbor-venv-", dir=path.parent) as tmp:
