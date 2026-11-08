@@ -70,16 +70,12 @@
   pythonPath = optionalString (pythonPathEntries != []) ''
     export PYTHONPATH=${escapeShellArg (nixLib.concatStringsSep ":" pythonPathEntries)}"''${PYTHONPATH:+:$PYTHONPATH}"
   '';
-  manage = operation: ''
-    ${expectedPython} ${./venv.py} ${operation} --venv "$VIRTUAL_ENV" \
-      --launcher ${venvPython} ${optionalString systemSitePackages "--system-site-packages"} || return 1
-  '';
   syncHook = optionalString autoSync ''
     export VIRTUAL_ENV=${optionalString (!(nixLib.hasPrefix "/" venvDir)) ''"$PWD"/''}${escapeShellArg venvDir}
-    ${manage "prepare"}
     unset UV_NO_SYNC
-    uv sync --active --python ${expectedPython} --python-preference only-system ${uvFlags} || return 1
-    ${manage "wrap"}
+    ${expectedPython} ${./venv.py} sync --venv "$VIRTUAL_ENV" \
+      --launcher ${venvPython} --uv ${nixLib.getExe pkgs.uv} \
+      ${optionalString systemSitePackages "--system-site-packages"} -- ${uvFlags} || return 1
     export UV_NO_SYNC=1
     . "$VIRTUAL_ENV/bin/activate"
   '';

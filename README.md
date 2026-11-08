@@ -57,8 +57,13 @@ configuration without an `executable` field.
 Runtime changes update interpreter aliases without rebuilding a compatible
 venv. Interpreter/site-policy changes rebuild previously managed environments
 with rollback on creation failure. Preparation and interpreter wrapping share a
-persistent sibling lock, so concurrent helper invocations cannot replace or
-remove another invocation's in-progress environment. An incompatible unmanaged environment is
+persistent per-venv lock through dependency synchronization, so concurrent shell
+entries cannot replace or remove an environment while another entry is syncing.
+Lock anchors live in `$XDG_CACHE_HOME/harbor-python/locks` (default
+`~/.cache/harbor-python/locks`), keyed by the canonical venv path, and do not add
+project files, so the hook needs a writable `XDG_CACHE_HOME` or `HOME` (set one
+in Nix builds). Earlier helpers kept a sibling `.<venv>.harbor-python.lock`; re-enter
+shells still running them, then delete that file. An incompatible unmanaged environment is
 preserved with an actionable error. Sync failures stop the hook before
 activation and before setting `UV_NO_SYNC`. `autoSync = false` leaves venv
 creation, synchronization and activation to the caller; use the exposed runtime

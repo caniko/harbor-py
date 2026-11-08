@@ -230,7 +230,7 @@ in
           "python"
         ];
         env.UV_PYTHON_DOWNLOADS = "never";
-        hookContains = ["uv sync"];
+        hookContains = ["venv.py sync --venv" "--launcher" "--uv"];
         inherit (meta) devShellTests;
       };
 
