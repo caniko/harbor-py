@@ -61,9 +61,6 @@
     git-hooks,
     ...
   } @ outputArgs: let
-    # harbor's superproject root passes its shared formatter; a formal
-    # argument would make standalone Nix resolve it as a registry flake.
-    harborFormatting = outputArgs.harborFormatting or null;
     harborRoot =
       outputArgs.harborRoot or (harbor-meta.lib.standaloneRoot {
         core = harbor-meta;
@@ -93,7 +90,7 @@
     // flake-utils.lib.eachDefaultSystem (
       system: let
         pkgs = lib.mkPkgs {inherit system;};
-        treefmt = treefmt-nix.lib.evalModule pkgs (import ./nix/treefmt.nix);
+        treefmt = treefmt-nix.lib.evalModule pkgs (import ./nix/treefmt.nix {inherit harbor-meta;});
       in {
         formatter = treefmt.config.build.wrapper;
 
@@ -114,10 +111,7 @@
             meta = harbor-meta.lib;
           }
           // {
-            formatting =
-              if harborFormatting == null
-              then treefmt.config.build.check self
-              else harborFormatting system;
+            formatting = treefmt.config.build.check self;
           };
       }
     );
